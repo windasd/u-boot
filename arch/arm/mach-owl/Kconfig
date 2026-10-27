@@ -20,6 +20,13 @@ config TEXT_BASE
 config SYS_CONFIG_NAME
         default "owl-common"
 
+# Only used to find board/actions/bubblegum_96/bubblegum_96.env
+config SYS_VENDOR
+	default "actions" if MACH_S900
+
+config SYS_BOARD
+	default "bubblegum_96" if MACH_S900
+
 config SYS_SOC
         default "s900" if MACH_S900
         default "s700" if MACH_S700
