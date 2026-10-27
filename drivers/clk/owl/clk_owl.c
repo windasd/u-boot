@@ -7,19 +7,37 @@
  */
 
 #include <dm.h>
+#include <dm/lists.h>
+#include <reset-uclass.h>
 #include "clk_owl.h"
 #include <asm/io.h>
 #if defined(CONFIG_MACH_S900)
 #include <asm/arch-owl/regs_s900.h>
 #include <dt-bindings/clock/actions,s900-cmu.h>
+#include <dt-bindings/reset/actions,s900-reset.h>
 #elif defined(CONFIG_MACH_S700)
 #include <asm/arch-owl/regs_s700.h>
 #include <dt-bindings/clock/actions,s700-cmu.h>
 #endif
 #include <linux/bitops.h>
 #include <linux/delay.h>
+#include <linux/kernel.h>
 
-#define CMU_DEVCLKEN0_SD0	BIT(22)
+#if defined(CONFIG_MACH_S900)
+#define CMU_DEVCLKEN0_SD(x)	BIT(5 + (x))	/* SD0..SD2: bits 5..7 */
+#define CMU_DEVCLKEN0_DMAC	BIT(1)
+#else
+#define CMU_DEVCLKEN0_SD(x)	BIT(22 + (x))	/* SD0..SD2: bits 22..24 */
+#define CMU_DEVCLKEN0_DMAC	BIT(17)
+#endif
+
+/* SDx_CLK: bits 4..0 divide by 1..32, bit 8 adds a divide by 128 */
+#define CMU_SDCLK_DIV_MASK	0x1f
+#define CMU_SDCLK_DIV128	BIT(8)
+#define CMU_SDCLK_DIV_MAX	32
+
+/* PLL multiplier field of CMU_COREPLL / CMU_DEVPLL */
+#define CMU_PLL_FACTOR_MASK	0xff
 
 void owl_clk_init(struct owl_clk_priv *priv)
 {
@@ -42,8 +60,12 @@ void owl_clk_init(struct owl_clk_priv *priv)
 
 	udelay(PLL_STABILITY_WAIT_US);
 
-	/* Configure CORE_PLL */
+	/*
+	 * Configure CORE_PLL. Replace the multiplier instead of OR-ing into
+	 * whatever the first-stage loader left there.
+	 */
 	core_pll = readl(priv->base + CMU_COREPLL);
+	core_pll &= ~CMU_PLL_FACTOR_MASK;
 	core_pll |= (CMU_COREPLL_EN | CMU_COREPLL_HOSC_EN | CMU_COREPLL_OUT);
 	writel(core_pll, priv->base + CMU_COREPLL);
 
@@ -51,6 +73,7 @@ void owl_clk_init(struct owl_clk_priv *priv)
 
 	/* Configure DEV_PLL */
 	dev_pll = readl(priv->base + CMU_DEVPLL);
+	dev_pll &= ~CMU_PLL_FACTOR_MASK;
 	dev_pll |= (CMU_DEVPLL_EN | CMU_DEVPLL_OUT);
 	writel(dev_pll, priv->base + CMU_DEVPLL);
 
@@ -94,7 +117,13 @@ int owl_clk_enable(struct clk *clk)
 		setbits_le32(priv->base + CMU_ETHERNETPLL, 5);
 		break;
 	case CLK_SD0:
-		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_SD0);
+	case CLK_SD1:
+	case CLK_SD2:
+		setbits_le32(priv->base + CMU_DEVCLKEN0,
+			     CMU_DEVCLKEN0_SD(clk->id - CLK_SD0));
+		break;
+	case CLK_DMAC:
+		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_DMAC);
 		break;
 	default:
 		return -EINVAL;
@@ -126,7 +155,13 @@ int owl_clk_disable(struct clk *clk)
 		clrbits_le32(priv->base + CMU_DEVCLKEN1, CMU_DEVCLKEN1_ETH);
 		break;
 	case CLK_SD0:
-		clrbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_SD0);
+	case CLK_SD1:
+	case CLK_SD2:
+		clrbits_le32(priv->base + CMU_DEVCLKEN0,
+			     CMU_DEVCLKEN0_SD(clk->id - CLK_SD0));
+		break;
+	case CLK_DMAC:
+		/* Linux and the vendor kernel expect the DMAC clock running */
 		break;
 	default:
 		return -EINVAL;
@@ -161,7 +196,9 @@ static ulong owl_get_sd_clk_rate(struct owl_clk_priv *priv, int sd_index)
 	ulong parent_rate = get_sd_parent_rate(priv, sd_index);
 
 	val = readl(priv->base + (CMU_SD0CLK + sd_index * 0x4));
-	div = (val & 0x1f) + 1;
+	div = (val & CMU_SDCLK_DIV_MASK) + 1;
+	if (val & CMU_SDCLK_DIV128)
+		div *= 128;
 
 	return (parent_rate / div);
 }
@@ -175,21 +212,20 @@ static ulong owl_set_sd_clk_rate(struct owl_clk_priv *priv, ulong rate,
 	if (rate == 0)
 		return rate;
 
-	div = (parent_rate / rate);
+	/* Round up so the card never sees more than the requested rate */
+	div = DIV_ROUND_UP(parent_rate, rate);
 
 	val = readl(priv->base + (CMU_SD0CLK + sd_index * 0x4));
-	/* Bits 4..0 is used to program div value and bit 8 to enable
-	 * divide by 128 circuit
-	 */
-	val &= ~0x11f;
-	if (div >= 128) {
-		div = div / 128;
-		val |= 0x100; /* enable divide by 128 circuit */
+	val &= ~(CMU_SDCLK_DIV128 | CMU_SDCLK_DIV_MASK);
+	if (div > CMU_SDCLK_DIV_MAX) {
+		/* Only 1..32 and 128 * (1..32) can be programmed */
+		div = min_t(uint, DIV_ROUND_UP(div, 128), CMU_SDCLK_DIV_MAX);
+		val |= CMU_SDCLK_DIV128;
 	}
-	val |= ((div - 1) & 0x1f);
+	val |= (div - 1) & CMU_SDCLK_DIV_MASK;
 	writel(val, priv->base + (CMU_SD0CLK + sd_index * 0x4));
 
-	return owl_get_sd_clk_rate(priv, 0);
+	return owl_get_sd_clk_rate(priv, sd_index);
 }
 
 static ulong owl_clk_get_rate(struct clk *clk)
@@ -199,7 +235,9 @@ static ulong owl_clk_get_rate(struct clk *clk)
 
 	switch (clk->id) {
 	case CLK_SD0:
-		rate = owl_get_sd_clk_rate(priv, 0);
+	case CLK_SD1:
+	case CLK_SD2:
+		rate = owl_get_sd_clk_rate(priv, clk->id - CLK_SD0);
 		break;
 	default:
 		return -ENOENT;
@@ -215,7 +253,9 @@ static ulong owl_clk_set_rate(struct clk *clk, ulong rate)
 
 	switch (clk->id) {
 	case CLK_SD0:
-		new_rate = owl_set_sd_clk_rate(priv, rate, 0);
+	case CLK_SD1:
+	case CLK_SD2:
+		new_rate = owl_set_sd_clk_rate(priv, rate, clk->id - CLK_SD0);
 		break;
 	default:
 		return -ENOENT;
@@ -223,6 +263,80 @@ static ulong owl_clk_set_rate(struct clk *clk, ulong rate)
 
 	return new_rate;
 }
+
+#if CONFIG_IS_ENABLED(DM_RESET) && defined(CONFIG_MACH_S900)
+/*
+ * Reset lines in CMU_DEVRST0/1, active low (Linux owl-reset.c). Only the
+ * lines U-Boot drivers use are listed; anything else is rejected.
+ */
+struct owl_reset_map {
+	u16 reg;
+	u32 bit;
+};
+
+static const struct owl_reset_map owl_resets[] = {
+	[RESET_DMAC]	= { CMU_DEVRST0, BIT(0) },
+	[RESET_SD0]	= { CMU_DEVRST0, BIT(4) },
+	[RESET_SD1]	= { CMU_DEVRST0, BIT(5) },
+	[RESET_SD2]	= { CMU_DEVRST0, BIT(9) },
+};
+
+static int owl_reset_request(struct reset_ctl *reset_ctl)
+{
+	if (reset_ctl->id >= ARRAY_SIZE(owl_resets) ||
+	    !owl_resets[reset_ctl->id].bit)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int owl_reset_set(struct reset_ctl *reset_ctl, bool deassert)
+{
+	const struct owl_reset_map *map = &owl_resets[reset_ctl->id];
+	phys_addr_t base = dev_read_addr(reset_ctl->dev);
+
+	if (deassert)
+		setbits_le32(base + map->reg, map->bit);
+	else
+		clrbits_le32(base + map->reg, map->bit);
+
+	return 0;
+}
+
+static int owl_reset_assert(struct reset_ctl *reset_ctl)
+{
+	return owl_reset_set(reset_ctl, false);
+}
+
+static int owl_reset_deassert(struct reset_ctl *reset_ctl)
+{
+	return owl_reset_set(reset_ctl, true);
+}
+
+static const struct reset_ops owl_reset_ops = {
+	.request	= owl_reset_request,
+	.rst_assert	= owl_reset_assert,
+	.rst_deassert	= owl_reset_deassert,
+};
+
+U_BOOT_DRIVER(owl_reset) = {
+	.name		= "owl_reset",
+	.id		= UCLASS_RESET,
+	.ops		= &owl_reset_ops,
+};
+
+static int owl_clk_bind(struct udevice *dev)
+{
+	/* The CMU node is also the reset controller (#reset-cells) */
+	return device_bind_driver_to_node(dev, "owl_reset", "reset",
+					  dev_ofnode(dev), NULL);
+}
+#else
+static int owl_clk_bind(struct udevice *dev)
+{
+	return 0;
+}
+#endif
 
 static int owl_clk_probe(struct udevice *dev)
 {
@@ -260,5 +374,6 @@ U_BOOT_DRIVER(clk_owl) = {
 	.of_match	= owl_clk_ids,
 	.ops		= &owl_clk_ops,
 	.priv_auto	= sizeof(struct owl_clk_priv),
+	.bind		= owl_clk_bind,
 	.probe		= owl_clk_probe,
 };
