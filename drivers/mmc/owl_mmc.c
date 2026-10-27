@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <log.h>
 #include <mmc.h>
+#include <reset.h>
 #include <asm/io.h>
 #include <linux/bitops.h>
 #include <linux/delay.h>
@@ -89,11 +90,15 @@
 /* DMAx_MODE */
 #define DMA_MODE_ST(x)			(((x) & 0x3) << 8)
 #define DMA_MODE_ST_DEV			DMA_MODE_ST(0)
+#define DMA_MODE_ST_DCU			DMA_MODE_ST(2)
 #define DMA_MODE_DT(x)			(((x) & 0x3) << 10)
+#define DMA_MODE_DT_DEV			DMA_MODE_DT(0)
 #define DMA_MODE_DT_DCU			DMA_MODE_DT(2)
 #define DMA_MODE_SAM(x)			(((x) & 0x3) << 16)
 #define DMA_MODE_SAM_CONST		DMA_MODE_SAM(0)
+#define DMA_MODE_SAM_INC		DMA_MODE_SAM(1)
 #define DMA_MODE_DAM(x)			(((x) & 0x3) << 18)
+#define DMA_MODE_DAM_CONST		DMA_MODE_DAM(0)
 #define DMA_MODE_DAM_INC		DMA_MODE_DAM(1)
 
 #define DMA_ENABLE			0x1
@@ -112,13 +117,17 @@ struct owl_mmc_priv {
 };
 
 static void owl_dma_config(struct owl_mmc_priv *priv, unsigned int src,
-			   unsigned int dst, unsigned int len)
+			   unsigned int dst, unsigned int len, bool to_dev)
 {
 	unsigned int mode = priv->dma_drq;
 
-	/* Set Source and Destination adderess mode */
-	mode |= (DMA_MODE_ST_DEV | DMA_MODE_SAM_CONST | DMA_MODE_DT_DCU |
-			DMA_MODE_DAM_INC);
+	/* Set Source and Destination address mode (Linux owl-dma.c) */
+	if (to_dev)
+		mode |= (DMA_MODE_ST_DCU | DMA_MODE_SAM_INC |
+			 DMA_MODE_DT_DEV | DMA_MODE_DAM_CONST);
+	else
+		mode |= (DMA_MODE_ST_DEV | DMA_MODE_SAM_CONST |
+			 DMA_MODE_DT_DCU | DMA_MODE_DAM_INC);
 
 	writel(mode, SD_DMA_CHANNEL(priv->dma_channel, 0) + DMA_MODE);
 	writel(src, SD_DMA_CHANNEL(priv->dma_channel, 0)  + DMA_SOURCE);
@@ -151,12 +160,12 @@ static void owl_mmc_prepare_data(struct owl_mmc_priv *priv,
 		if (data->flags == MMC_DATA_READ) {
 			buf = (ulong) (data->dest);
 			owl_dma_config(priv, (ulong) priv->reg_base +
-				       OWL_REG_SD_DAT, buf, total);
+				       OWL_REG_SD_DAT, buf, total, false);
 			invalidate_dcache_range(buf, buf + total);
 		} else {
 			buf = (ulong) (data->src);
 			owl_dma_config(priv, buf, (ulong) priv->reg_base +
-				       OWL_REG_SD_DAT, total);
+				       OWL_REG_SD_DAT, total, true);
 			flush_dcache_range(buf, buf + total);
 		}
 		/* DMA START */
@@ -164,11 +173,19 @@ static void owl_mmc_prepare_data(struct owl_mmc_priv *priv,
 	}
 }
 
+/* Stop the DMA channel and the controller so the next command can start */
+static void owl_mmc_stop_transfer(struct owl_mmc_priv *priv)
+{
+	writel(0x0, SD_DMA_CHANNEL(priv->dma_channel, 0) + DMA_START);
+	while (readl(priv->reg_base + OWL_REG_SD_CTL) & OWL_SD_CTL_TS)
+		clrbits_le32(priv->reg_base + OWL_REG_SD_CTL, OWL_SD_CTL_TS);
+}
+
 static int owl_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 			    struct mmc_data *data)
 {
 	struct owl_mmc_priv *priv = dev_get_priv(dev);
-	unsigned int cmd_rsp_mask, mode, reg;
+	unsigned int cmd_rsp_mask = 0, mode, reg;
 	int ret;
 
 	setbits_le32(priv->reg_base + OWL_REG_SD_EN, OWL_SD_ENABLE);
@@ -217,6 +234,7 @@ static int owl_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 
 	if (ret == -ETIMEDOUT) {
 		debug("error: transferred data timeout\n");
+		owl_mmc_stop_transfer(priv);
 		return ret;
 	}
 
@@ -224,11 +242,15 @@ static int owl_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 	if (cmd->resp_type & MMC_RSP_PRESENT) {
 		if (reg & OWL_SD_STATE_CLNR) {
 			printf("Error CMD_NO_RSP\n");
+			if (data)
+				owl_mmc_stop_transfer(priv);
 			return -1;
 		}
 
 		if (reg & OWL_SD_STATE_CRC7ER) {
 			printf("Error CMD_RSP_CRC\n");
+			if (data)
+				owl_mmc_stop_transfer(priv);
 			return -1;
 		}
 
@@ -251,17 +273,21 @@ static int owl_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 		ret = readl_poll_timeout(SD_DMA_CHANNEL(priv->dma_channel, 0) + DMA_START,
 					 reg, !(reg & DMA_ENABLE), DMA_TRANSFER_TIMEOUT);
 
+		/* DMA STOP, Transmission STOP */
+		owl_mmc_stop_transfer(priv);
+
 		if (ret == -ETIMEDOUT) {
 			debug("error: DMA transfer timeout\n");
 			return ret;
 		}
 
-		/* DMA STOP */
-		writel(0x0, SD_DMA_CHANNEL(priv->dma_channel, 0) + DMA_START);
-		/* Transmission STOP */
-		while (readl(priv->reg_base + OWL_REG_SD_CTL) & OWL_SD_CTL_TS)
-			clrbits_le32(priv->reg_base + OWL_REG_SD_CTL,
-					OWL_SD_CTL_TS);
+		/* Drop lines the CPU may have speculatively fetched meanwhile */
+		if (data->flags == MMC_DATA_READ) {
+			ulong buf = (ulong)data->dest;
+
+			invalidate_dcache_range(buf, buf + data->blocksize *
+						data->blocks);
+		}
 	}
 
 	return 0;
@@ -331,6 +357,25 @@ static int owl_mmc_set_ios(struct udevice *dev)
 	return 0;
 }
 
+/*
+ * The first-stage loader may leave the DMA controller or this SD controller
+ * gated or in reset; release both as the vendor U-Boot does. The clocks and
+ * resets are optional in the device tree.
+ */
+static void owl_mmc_release_resets(struct udevice *dev, ofnode dma_node)
+{
+	struct reset_ctl_bulk resets;
+	struct reset_ctl dma_reset;
+	struct clk dma_clk;
+
+	if (!clk_get_by_index_nodev(dma_node, 0, &dma_clk))
+		clk_enable(&dma_clk);
+	if (!reset_get_by_index_nodev(dma_node, 0, &dma_reset))
+		reset_deassert(&dma_reset);
+	if (!reset_get_bulk(dev, &resets))
+		reset_deassert_bulk(&resets);
+}
+
 static const struct dm_mmc_ops owl_mmc_ops = {
 	.send_cmd       = owl_mmc_send_cmd,
 	.set_ios        = owl_mmc_set_ios,
@@ -376,6 +421,8 @@ static int owl_mmc_probe(struct udevice *dev)
 		debug("clk_get_by_index() failed: %d\n", ret);
 		return ret;
 	}
+
+	owl_mmc_release_resets(dev, args.node);
 
 	upriv->mmc = &plat->mmc;
 
