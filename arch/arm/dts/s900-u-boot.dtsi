@@ -15,3 +15,8 @@
 &cmu {
 	bootph-all;
 };
+
+/* owl_mmc releases the DMAC reset like the vendor U-Boot owl_dma_init() */
+&dma {
+	resets = <&cmu RESET_DMAC>;
+};

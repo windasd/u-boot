@@ -12,7 +12,13 @@
 	model = "Bubblegum-96";
 	compatible = "ucrobotics,bubblegum-96", "actions,s900";
 
+	/*
+	 * mmc1 is the eMMC (SD2) so "mmc 1:2" matches the vendor U-Boot
+	 * and existing boot.scr files.
+	 */
 	aliases {
+		mmc0 = &mmc0;
+		mmc1 = &mmc2;
 		serial5 = &uart5;
 	};
 
@@ -28,4 +34,21 @@
 
 &uart5 {
 	status = "okay";
+};
+
+/* uSD; no pinctrl driver, relies on the pinmux left by the boot ROM/SECM */
+&mmc0 {
+	status = "okay";
+	bus-width = <4>;
+	cap-sd-highspeed;
+	no-1-8-v;
+};
+
+/* eMMC */
+&mmc2 {
+	status = "okay";
+	bus-width = <8>;
+	non-removable;
+	cap-mmc-highspeed;
+	no-1-8-v;
 };
