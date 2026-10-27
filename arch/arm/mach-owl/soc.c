@@ -15,6 +15,8 @@
 #include <asm/io.h>
 #include <asm/mach-types.h>
 #include <asm/psci.h>
+#include <linux/bitops.h>
+#include <wait_bit.h>
 
 #define DMM_INTERLEAVE_PER_CH_CFG	0xe0290028
 
@@ -56,6 +58,55 @@ int dram_init_banksize(void)
 	return 0;
 }
 
+#define S900_SPS_PG_CTL		0xe012e000
+#define S900_SPS_PG_ACK		0xe012e004
+#define S900_CMU_DEVCLKEN0	0xe01600a0
+#define S900_CMU_DEVRST0	0xe01600a8
+#define S900_MFP_CTL3		0xe01b004c
+#define S900_PAD_PULLCTL2	0xe01b0068
+#define S900_NAND_ALG0_CTR_IO	0xe03000a8
+
+#define SPS_PG_NAND		BIT(14)
+#define SPS_PG_ACK_NAND		BIT(12)
+#define DEVCLKEN0_NANDC1	BIT(11)
+#define DEVCLKEN0_NANDC0	BIT(4)
+#define DEVRST0_NANDC0		BIT(3)	/* active low */
+#define MFP_CTL3_SD2		BIT(27)
+#define PAD_PULLCTL2_SD2	(BIT(15) | BIT(14))
+#define NAND_ALG_PAD_MASK	(BIT(21) | BIT(20))
+#define NAND_ALG_PAD_SD		BIT(21)
+#define NAND_ALG_EN_V18_R	BIT(25)
+#define NAND_ALG_EN_V18_W	BIT(24)
+
+/*
+ * The eMMC (SD2) runs on the NAND pads. Mux them, power the NAND domain and
+ * set the pad mode as the vendor U-Boot 2015.07 does (owl_mmc_config_mfp()).
+ * Linux keeps this state and never touches these registers.
+ */
+static void s900_emmc_pads_init(void)
+{
+	u32 val;
+
+	setbits_le32(S900_MFP_CTL3, MFP_CTL3_SD2);
+	setbits_le32(S900_PAD_PULLCTL2, PAD_PULLCTL2_SD2);
+
+	clrbits_le32(S900_CMU_DEVRST0, DEVRST0_NANDC0);
+	setbits_le32(S900_CMU_DEVCLKEN0, DEVCLKEN0_NANDC0 | DEVCLKEN0_NANDC1);
+	setbits_le32(S900_SPS_PG_CTL, SPS_PG_NAND);
+	if (wait_for_bit_le32((void *)S900_SPS_PG_ACK, SPS_PG_ACK_NAND, true,
+			      10, false))
+		printf("S900: NAND power domain not acknowledged\n");
+	setbits_le32(S900_CMU_DEVRST0, DEVRST0_NANDC0);
+
+	val = readl(S900_NAND_ALG0_CTR_IO);
+	val = (val & ~NAND_ALG_PAD_MASK) | NAND_ALG_PAD_SD;
+	if (val & NAND_ALG_EN_V18_R)
+		val |= NAND_ALG_EN_V18_W;
+	else
+		val &= ~NAND_ALG_EN_V18_W;
+	writel(val, S900_NAND_ALG0_CTR_IO);
+}
+
 static void show_psci_version(void)
 {
 	struct arm_smccc_res res;
@@ -70,6 +121,8 @@ static void show_psci_version(void)
 int board_init(void)
 {
 	show_psci_version();
+	if (IS_ENABLED(CONFIG_MACH_S900))
+		s900_emmc_pads_init();
 
 	return 0;
 }
