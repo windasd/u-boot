@@ -358,9 +358,9 @@ static int owl_mmc_set_ios(struct udevice *dev)
 }
 
 /*
- * The first-stage loader may leave the DMA controller or this SD controller
- * gated or in reset; release both as the vendor U-Boot does. The clocks and
- * resets are optional in the device tree.
+ * The first-stage loader may leave the DMA controller gated or in reset:
+ * release it. Reset this SD controller as Linux and the vendor U-Boot do.
+ * The clocks and resets are optional in the device tree.
  */
 static void owl_mmc_release_resets(struct udevice *dev, ofnode dma_node)
 {
@@ -372,8 +372,11 @@ static void owl_mmc_release_resets(struct udevice *dev, ofnode dma_node)
 		clk_enable(&dma_clk);
 	if (!reset_get_by_index_nodev(dma_node, 0, &dma_reset))
 		reset_deassert(&dma_reset);
-	if (!reset_get_bulk(dev, &resets))
+	if (!reset_get_bulk(dev, &resets)) {
+		reset_assert_bulk(&resets);
+		udelay(20);
 		reset_deassert_bulk(&resets);
+	}
 }
 
 static const struct dm_mmc_ops owl_mmc_ops = {
@@ -423,6 +426,12 @@ static int owl_mmc_probe(struct udevice *dev)
 	}
 
 	owl_mmc_release_resets(dev, args.node);
+
+	/* Clock on before the first register write, then enable the module */
+	ret = clk_enable(&priv->clk);
+	if (ret)
+		return ret;
+	writel(OWL_SD_ENABLE | OWL_SD_EN_RESE, priv->reg_base + OWL_REG_SD_EN);
 
 	upriv->mmc = &plat->mmc;
 
