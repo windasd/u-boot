@@ -15,7 +15,7 @@ CONFIG_DISTRO_DEFAULTS=y
 CONFIG_BOOTDELAY=1
 CONFIG_USE_BOOTARGS=y
 CONFIG_BOOTARGS="console=ttyOWL5,115200n8"
-CONFIG_BOOTCOMMAND="load mmc 1:2 ${scriptaddr} boot.scr && source ${scriptaddr}"
+CONFIG_BOOTCOMMAND="load mmc 1:2 ${scriptaddr} boot.scr && source ${scriptaddr}; echo bg96: boot.scr failed, trying rescue.scr on p5; load mmc 1:5 ${scriptaddr} rescue.scr && source ${scriptaddr}"
 CONFIG_SYS_PBSIZE=1051
 # CONFIG_DISPLAY_CPUINFO is not set
 # CONFIG_DISPLAY_BOARDINFO is not set
