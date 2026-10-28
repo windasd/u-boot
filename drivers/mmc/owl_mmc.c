@@ -112,6 +112,7 @@ struct owl_mmc_priv {
 	void *reg_base;
 	void *dma_channel;
 	struct clk clk;
+	bool clk_on;		  /* Module clock running */
 	unsigned int clock;	  /* Current clock */
 	unsigned int dma_drq;	  /* Trigger Source */
 };
@@ -326,6 +327,26 @@ static int owl_mmc_set_ios(struct udevice *dev)
 	struct mmc *mmc = &plat->mmc;
 	u32 reg, ret;
 
+	/*
+	 * An access to the controller while its module clock is gated hangs
+	 * the S900 bus. Gate the clock with no register access after it, and
+	 * enable it before any register access.
+	 */
+	if (mmc->clk_disable) {
+		if (!priv->clk_on)
+			return 0;
+		ret = clk_disable(&priv->clk);
+		if (ret)
+			return ret;
+		priv->clk_on = false;
+		return 0;
+	}
+
+	ret = clk_enable(&priv->clk);
+	if (ret)
+		return ret;
+	priv->clk_on = true;
+
 	if (mmc->clock != priv->clock) {
 		priv->clock = mmc->clock;
 		ret = owl_mmc_clk_set(priv, mmc->clock);
@@ -336,13 +357,6 @@ static int owl_mmc_set_ios(struct udevice *dev)
 		if (IS_ERR_VALUE(ret))
 			return ret;
 	}
-
-	if (mmc->clk_disable)
-		ret = clk_disable(&priv->clk);
-	else
-		ret = clk_enable(&priv->clk);
-	if (ret)
-		return ret;
 
 	/* Set the Bus width */
 	reg = readl(priv->reg_base + OWL_REG_SD_EN);
@@ -431,6 +445,7 @@ static int owl_mmc_probe(struct udevice *dev)
 	ret = clk_enable(&priv->clk);
 	if (ret)
 		return ret;
+	priv->clk_on = true;
 	writel(OWL_SD_ENABLE | OWL_SD_EN_RESE, priv->reg_base + OWL_REG_SD_EN);
 
 	upriv->mmc = &plat->mmc;
