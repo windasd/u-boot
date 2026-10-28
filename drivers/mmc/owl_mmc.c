@@ -354,7 +354,8 @@ static int owl_mmc_set_ios(struct udevice *dev)
 		if (IS_ERR_VALUE(ret))
 			return ret;
 
-		ret = clk_set_rate(&priv->clk, mmc->clock);
+		/* The controller divides its input clock by two */
+		ret = clk_set_rate(&priv->clk, mmc->clock * 2);
 		if (IS_ERR_VALUE(ret))
 			return ret;
 	}
