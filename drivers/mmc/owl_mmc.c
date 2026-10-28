@@ -242,17 +242,18 @@ static int owl_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 	reg = readl(priv->reg_base + OWL_REG_SD_STATE) & cmd_rsp_mask;
 	if (cmd->resp_type & MMC_RSP_PRESENT) {
 		if (reg & OWL_SD_STATE_CLNR) {
-			printf("Error CMD_NO_RSP\n");
+			/* Expected while probing: an eMMC ignores CMD8 and CMD55 */
+			debug("Error CMD_NO_RSP\n");
 			if (data)
 				owl_mmc_stop_transfer(priv);
-			return -1;
+			return -ETIMEDOUT;
 		}
 
 		if (reg & OWL_SD_STATE_CRC7ER) {
 			printf("Error CMD_RSP_CRC\n");
 			if (data)
 				owl_mmc_stop_transfer(priv);
-			return -1;
+			return -EILSEQ;
 		}
 
 		if (cmd->resp_type & MMC_RSP_136) {
