@@ -34,6 +34,7 @@
 /* SDx_CLK: bits 4..0 divide by 1..32, bit 8 adds a divide by 128 */
 #define CMU_SDCLK_DIV_MASK	0x1f
 #define CMU_SDCLK_DIV128	BIT(8)
+#define CMU_SDCLK_SRC_NANDPLL	BIT(9)	/* else DEV_PLL */
 #define CMU_SDCLK_DIV_MAX	32
 
 /* PLL multiplier field of CMU_COREPLL / CMU_DEVPLL */
@@ -207,10 +208,20 @@ static ulong owl_set_sd_clk_rate(struct owl_clk_priv *priv, ulong rate,
 				 int sd_index)
 {
 	uint div, val;
-	ulong parent_rate = get_sd_parent_rate(priv, sd_index);
+	ulong parent_rate;
 
 	if (rate == 0)
 		return rate;
+
+	/*
+	 * Run from DEV_PLL, as the vendor U-Boot does, rather than from
+	 * whichever source the first-stage loader left selected: NAND_PLL
+	 * may not be running. Switch through the slowest divider.
+	 */
+	clrsetbits_le32(priv->base + (CMU_SD0CLK + sd_index * 0x4),
+			CMU_SDCLK_SRC_NANDPLL,
+			CMU_SDCLK_DIV128 | CMU_SDCLK_DIV_MASK);
+	parent_rate = get_sd_parent_rate(priv, sd_index);
 
 	/* Round up so the card never sees more than the requested rate */
 	div = DIV_ROUND_UP(parent_rate, rate);
