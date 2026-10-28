@@ -407,6 +407,7 @@ static int owl_mmc_probe(struct udevice *dev)
 	struct owl_mmc_priv *priv = dev_get_priv(dev);
 	struct mmc_config *cfg = &plat->cfg;
 	struct ofnode_phandle_args args;
+	ulong rate;
 	int ret;
 	fdt_addr_t addr;
 
@@ -442,6 +443,15 @@ static int owl_mmc_probe(struct udevice *dev)
 	}
 
 	owl_mmc_release_resets(dev, args.node);
+
+	/*
+	 * Start at the identification rate: the clock source and divider
+	 * the first-stage loader left are unknown. The controller divides
+	 * its input clock by two.
+	 */
+	rate = clk_set_rate(&priv->clk, 2 * cfg->f_min);
+	if (IS_ERR_VALUE(rate))
+		return (int)rate;
 
 	/* Clock on before the first register write, then enable the module */
 	ret = clk_enable(&priv->clk);
