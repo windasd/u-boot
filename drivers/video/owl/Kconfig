@@ -5,8 +5,9 @@ config VIDEO_OWL_S900
 	  Drives the S900 display engine path 0 into the HDMI transmitter
 	  at a 1080p or 720p CEA mode, scanning out a 1920x1080 XRGB8888
 	  framebuffer at 0x19000000 that the display engine scales to the
-	  output, as the vendor U-Boot 2015.07 does. There is no EDID
-	  support: the mode comes from the bg96_hdmi_mode environment
-	  variable, and bg96_hdmi selects auto, force or off. The board's
-	  ft_board_setup() hands the framebuffer to the OS as a
-	  simple-framebuffer.
+	  output, as the vendor U-Boot 2015.07 does. With DM_I2C the mode
+	  is the best one the sink's EDID lists, read over the I2C bus the
+	  display node's ddc-i2c-bus names; the bg96_hdmi_mode environment
+	  variable can name one instead, and bg96_hdmi selects auto, force
+	  or off. The board's ft_board_setup() hands the framebuffer to the
+	  OS as a simple-framebuffer.

@@ -9,7 +9,9 @@
  *   bg96_hdmi       auto (default): light the output only if a sink is seen
  *                   force: light it without a sink (plug in later)
  *                   off: leave the display hardware untouched
- *   bg96_hdmi_mode  720p50 (default), 720p60, 1080p50 or 1080p60
+ *   bg96_hdmi_mode  auto (default): the first of 1080p60, 1080p50, 720p60
+ *                   and 720p50 that the sink's EDID lists, else 720p50;
+ *                   or one of those names
  */
 
 #include <cpu_func.h>
@@ -44,7 +46,7 @@ static const struct s900_mode s900_modes[] = {
 	  0x80882904, 0x00f00fc1, 0x1107 },
 };
 
-/* The vendor U-Boot's mode, the default */
+/* The vendor U-Boot's mode, for a sink without a usable EDID */
 #define S900_MODE_FALLBACK	(&s900_modes[ARRAY_SIZE(s900_modes) - 1])
 
 /*
@@ -55,12 +57,13 @@ static bool s900_tried;
 static int s900_result;
 static char s900_status[128] = "not-probed";
 
-/* The mode named in the environment, else the default */
+/* A mode named in the environment, else the first one the EDID lists */
 static const struct s900_mode *s900_pick_mode(struct udevice *dev,
 					      char *why, size_t len)
 {
 	const char *name = env_get("bg96_hdmi_mode");
-	int i;
+	u8 edid[S900_EDID_SIZE];
+	int i, blocks;
 
 	for (i = 0; name && i < ARRAY_SIZE(s900_modes); i++) {
 		if (!strcmp(name, s900_modes[i].name)) {
@@ -69,7 +72,19 @@ static const struct s900_mode *s900_pick_mode(struct udevice *dev,
 		}
 	}
 
-	snprintf(why, len, "default");
+	blocks = s900_edid_read(dev, edid);
+	if (blocks < 0) {
+		snprintf(why, len, "edid-error%d", blocks);
+		return S900_MODE_FALLBACK;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(s900_modes); i++) {
+		if (s900_edid_has_mode(edid, &s900_modes[i])) {
+			snprintf(why, len, "edid%d", blocks);
+			return &s900_modes[i];
+		}
+	}
+	snprintf(why, len, "edid%d-none", blocks);
 
 	return S900_MODE_FALLBACK;
 }

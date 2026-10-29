@@ -13,6 +13,8 @@
 #include <linux/bitops.h>
 #include <linux/types.h>
 
+struct udevice;
+
 /* CMU and SPS registers: always accessible */
 #define S900_CMU_TVOUTPLL	0xe0160018
 #define S900_CMU_DECLK		0xe0160030
@@ -58,6 +60,11 @@ struct s900_mode {
 	u32 tx2;	/* HDMI_TX_2, TMDS lanes on */
 	u32 dipccr;	/* HDMI_DIPCCR */
 };
+
+#define S900_EDID_SIZE		256	/* base block and one extension */
+
+int s900_edid_read(struct udevice *dev, u8 *edid);
+bool s900_edid_has_mode(const u8 *edid, const struct s900_mode *mode);
 
 struct s900_display {
 	void __iomem *de;
