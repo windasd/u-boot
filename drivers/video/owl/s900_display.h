@@ -34,7 +34,8 @@
 
 /*
  * The vendor U-Boot's framebuffer, 1920x1080 XRGB8888, which the DE scales
- * to the output mode. Linux takes it over as a simple-framebuffer.
+ * to the output mode (1:1 at 1080p). Linux takes it over as a
+ * simple-framebuffer.
  */
 #define S900_FB_BASE		0x19000000
 #define S900_FB_WIDTH		1920
@@ -43,13 +44,19 @@
 #define S900_FB_SIZE		(S900_FB_STRIDE * S900_FB_HEIGHT)
 #define S900_FB_RESERVED	0x800000	/* no-map in both device trees */
 
-/* A CEA mode the HDMI transmitter is programmed for */
+/*
+ * A progressive CEA-861 mode with both syncs active high. The TMDS PHY
+ * settings and HDMI_DIPCCR are the vendor U-Boot's for its pixel clock.
+ */
 struct s900_mode {
 	const char *name;
-	u16 width;
-	u16 height;
 	u8 vic;
-	u32 victl;	/* HDMI_VICTL: total pixels and lines */
+	u32 pixclk_khz;
+	u16 hactive, hfp, hsync, hbp;
+	u16 vactive, vfp, vsync, vbp;
+	u32 tx1;	/* HDMI_TX_1 */
+	u32 tx2;	/* HDMI_TX_2, TMDS lanes on */
+	u32 dipccr;	/* HDMI_DIPCCR */
 };
 
 struct s900_display {

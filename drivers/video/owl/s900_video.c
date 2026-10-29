@@ -2,14 +2,14 @@
 /*
  * Actions Semi S900 HDMI console: the display engine scans a fixed
  * 1920x1080 XRGB8888 framebuffer at 0x19000000 out to the HDMI transmitter
- * at a 720p CEA mode, as the vendor U-Boot 2015.07 does. Linux takes the
- * framebuffer over as a simple-framebuffer (s900_video_ft_fixup()).
+ * at a 1080p or 720p CEA mode, as the vendor U-Boot 2015.07 does. Linux
+ * takes the framebuffer over as a simple-framebuffer (s900_video_ft_fixup()).
  *
  * Environment:
  *   bg96_hdmi       auto (default): light the output only if a sink is seen
  *                   force: light it without a sink (plug in later)
  *                   off: leave the display hardware untouched
- *   bg96_hdmi_mode  720p50 (default) or 720p60
+ *   bg96_hdmi_mode  720p50 (default), 720p60, 1080p50 or 1080p60
  */
 
 #include <cpu_func.h>
@@ -28,10 +28,24 @@
 #include <linux/string.h>
 #include "s900_display.h"
 
+/*
+ * CEA-861 timings, best first. The TMDS PHY values (HDMI_TX_1/2) and
+ * HDMI_DIPCCR are the vendor U-Boot's for 74.25 and 148.5 MHz.
+ */
 static const struct s900_mode s900_modes[] = {
-	{ "720p50", 1280, 720, 19, 0x03dd82ed },	/* 1980 x 750 total */
-	{ "720p60", 1280, 720, 4, 0x033882ed },		/* 1650 x 750 total */
+	/* name      vic  kHz     hact  hfp  hs   hbp  vact vfp vs  vbp */
+	{ "1080p60", 16, 148500, 1920, 88,  44,  148, 1080, 4,  5,  36,
+	  0x80842846, 0x00000fc1, 0x1105 },
+	{ "1080p50", 31, 148500, 1920, 528, 44,  148, 1080, 4,  5,  36,
+	  0x80842846, 0x00000fc1, 0x1107 },
+	{ "720p60",  4,  74250,  1280, 110, 40,  220, 720,  5,  5,  20,
+	  0x80882904, 0x00f00fc1, 0x1107 },
+	{ "720p50",  19, 74250,  1280, 440, 40,  220, 720,  5,  5,  20,
+	  0x80882904, 0x00f00fc1, 0x1107 },
 };
+
+/* The vendor U-Boot's mode, the default */
+#define S900_MODE_FALLBACK	(&s900_modes[ARRAY_SIZE(s900_modes) - 1])
 
 /*
  * A failed probe is retried for stdout and for stderr: keep the verdict so
@@ -39,18 +53,25 @@ static const struct s900_mode s900_modes[] = {
  */
 static bool s900_tried;
 static int s900_result;
-static char s900_status[96] = "not-probed";
+static char s900_status[128] = "not-probed";
 
-static const struct s900_mode *s900_pick_mode(void)
+/* The mode named in the environment, else the default */
+static const struct s900_mode *s900_pick_mode(struct udevice *dev,
+					      char *why, size_t len)
 {
 	const char *name = env_get("bg96_hdmi_mode");
 	int i;
 
-	for (i = 0; name && i < ARRAY_SIZE(s900_modes); i++)
-		if (!strcmp(name, s900_modes[i].name))
+	for (i = 0; name && i < ARRAY_SIZE(s900_modes); i++) {
+		if (!strcmp(name, s900_modes[i].name)) {
+			snprintf(why, len, "env");
 			return &s900_modes[i];
+		}
+	}
 
-	return &s900_modes[0];
+	snprintf(why, len, "default");
+
+	return S900_MODE_FALLBACK;
 }
 
 static int s900_get_resources(struct udevice *dev, struct s900_display *d)
@@ -90,12 +111,13 @@ static void s900_restore_gates(struct s900_display *d, u32 en0, u32 en1, u32 rst
 static int s900_light(struct udevice *dev, struct s900_display *d)
 {
 	const char *policy = env_get("bg96_hdmi") ?: "auto";
-	const struct s900_mode *mode = s900_pick_mode();
+	const struct s900_mode *mode;
 	u32 en0 = readl(S900_CMU_DEVCLKEN0);
 	u32 en1 = readl(S900_CMU_DEVCLKEN1);
 	u32 rst1 = readl(S900_CMU_DEVRST1);
 	bool calibrated, go;
 	u32 cr = 0, ddc = 0;
+	char why[24];
 	int sink, ret;
 
 	log_debug("s900: entry DEVCLKEN0 %#x DEVCLKEN1 %#x DEVRST1 %#x\n",
@@ -123,6 +145,7 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 		log_debug("s900: no HDMI sink\n");
 		return -ENODEV;
 	}
+	mode = s900_pick_mode(dev, why, sizeof(why));
 
 	ret = s900_de_power_on(d);
 	if (ret) {
@@ -149,8 +172,8 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 	}
 
 	snprintf(s900_status, sizeof(s900_status),
-		 "ok mode=%s hpd=%d calib=%s pll=%s go=%s cr=%#x ddc=%#x",
-		 mode->name, sink, calibrated ? "ok" : "timeout",
+		 "ok mode=%s/%s hpd=%d calib=%s pll=%s go=%s cr=%#x ddc=%#x",
+		 mode->name, why, sink, calibrated ? "ok" : "timeout",
 		 s900_hdmi_pll_locked() ? "lock" : "nolock", go ? "ok" : "stuck",
 		 s900_hdmi_cr(d), ddc);
 

@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Actions Semi S900 HDMI transmitter, RGB 4:4:4 at 24 bit from the DE, for
- * the 720p CEA modes. Order and values as in the vendor U-Boot 2015.07
- * drivers/video/owl/dss/controller/hdmic/ip-sx00.c (ip_sx00_video_enable()).
+ * the 720p and 1080p CEA modes. Order and values as in the vendor U-Boot
+ * 2015.07 drivers/video/owl/dss/controller/hdmic/ip-sx00.c
+ * (ip_sx00_video_enable()).
  */
 
 #include <log.h>
 #include <time.h>
 #include <asm/io.h>
 #include <asm/arch-owl/sps.h>
+#include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include "s900_display.h"
@@ -49,23 +51,10 @@
 #define TVOUTPLL_EN		BIT(0)
 #define TVOUTPLL_HOSC		BIT(8)	/* 24 MHz reference */
 #define TVOUTPLL_SEL		GENMASK(18, 16)
-#define TVOUTPLL_SEL_74M25	(4 << 16)
 #define TVOUTPLLDEBUG0_LOCK	BIT(14)
 
 #define HPD_TIMEOUT_MS		200
 #define CAL_TIMEOUT_MS		20	/* the vendor waits forever */
-
-/*
- * The 720p50 and 720p60 timings differ only in the horizontal front porch,
- * so everything but HDMI_VICTL (the totals) is the same. CEA-861:
- * 1280x720, hsync 40, hbp 220, vfp 5, vsync 5, vbp 20, both syncs positive.
- */
-#define HDMI_720P_TX_1		0x80882904	/* bit 13: PLL on the falling edge */
-#define HDMI_720P_TX_2		0x00f00fc1
-#define HDMI_720P_VIVHSYNC	0x042ed027
-#define HDMI_720P_VIALSEOF	0x002e8018
-#define HDMI_720P_VIADLSE	0x06030103
-#define HDMI_720P_DIPCCR	0x1107
 
 /* AVI InfoFrame v2: RGB, 16:9 picture, aspect as picture */
 #define AVI_TYPE		0x82
@@ -184,11 +173,25 @@ void s900_hdmi_stop(struct s900_display *d)
 	hdmi_clrsetbits(d, HDMI_TX_2, HDMI_TX_2_LANES, 0);
 }
 
-static void hdmi_pll_enable(void)
+/* CMU_TVOUTPLL[18:16] for a pixel clock, from the vendor's table */
+static int hdmi_pll_sel(u32 pixclk_khz)
+{
+	switch (pixclk_khz) {
+	case 74250:
+		return 4;
+	case 148500:
+		return 6;
+	default:
+		return -EINVAL;
+	}
+}
+
+static void hdmi_pll_enable(int sel)
 {
 	clrbits_le32(S900_CMU_TVOUTPLL, TVOUTPLL_EN);
 	setbits_le32(S900_CMU_TVOUTPLL, TVOUTPLL_HOSC);
-	clrsetbits_le32(S900_CMU_TVOUTPLL, TVOUTPLL_SEL, TVOUTPLL_SEL_74M25);
+	clrsetbits_le32(S900_CMU_TVOUTPLL, TVOUTPLL_SEL,
+			FIELD_PREP(TVOUTPLL_SEL, sel));
 	mdelay(1);
 	/* The vendor's CMU_TVOUTPLLDEBUG0 write has its arguments swapped: skip it */
 	clrsetbits_le32(S900_SPS_LDO_CTL, 0xf, 0xa);
@@ -197,13 +200,13 @@ static void hdmi_pll_enable(void)
 }
 
 /* TMDS PHY, lanes still off, then the S900 TMDS clock calibration */
-static bool hdmi_phy_enable(struct s900_display *d)
+static bool hdmi_phy_enable(struct s900_display *d, const struct s900_mode *mode)
 {
 	ulong start;
 
 	hdmi_clrsetbits(d, TMDS_EODR0, 0, BIT(31));
-	hdmi_writel(d, HDMI_TX_1, HDMI_720P_TX_1);
-	hdmi_writel(d, HDMI_TX_2, HDMI_720P_TX_2 & ~HDMI_TX_2_LANES);
+	hdmi_writel(d, HDMI_TX_1, mode->tx1);
+	hdmi_writel(d, HDMI_TX_2, mode->tx2 & ~HDMI_TX_2_LANES);
 	udelay(500);
 
 	hdmi_clrsetbits(d, CEC_DDC_HPD, CEC_DDC_HPD_CAL_START, 0);
@@ -220,18 +223,30 @@ static bool hdmi_phy_enable(struct s900_display *d)
 	return true;
 }
 
+/*
+ * The S900 timing generator counts from the start of the syncs: a line
+ * starts with hsync, then the back porch, active pixels and front porch, and
+ * frames likewise. Same values as the vendor U-Boot, whose vsync starts on
+ * the first line.
+ */
 static void hdmi_video_config(struct s900_display *d,
 			      const struct s900_mode *mode)
 {
+	u32 htotal = mode->hactive + mode->hfp + mode->hsync + mode->hbp;
+	u32 vtotal = mode->vactive + mode->vfp + mode->vsync + mode->vbp;
+	u32 hstart = mode->hsync + mode->hbp - 1;	/* last blank pixel */
+	u32 vstart = mode->vsync + mode->vbp - 1;	/* last blank line */
+
 	/* Syncs active high, progressive, no pixel repetition */
 	hdmi_clrsetbits(d, HDMI_SCHCR, BIT(2) | BIT(1), 0);
-	hdmi_writel(d, HDMI_VICTL, mode->victl);
+	hdmi_writel(d, HDMI_VICTL, (htotal - 1) << 15 | (vtotal - 1));
 	hdmi_writel(d, HDMI_VIVSYNC, 0);
-	hdmi_writel(d, HDMI_VIVHSYNC, HDMI_720P_VIVHSYNC);
-	hdmi_writel(d, HDMI_VIALSEOF, HDMI_720P_VIALSEOF);
+	hdmi_writel(d, HDMI_VIVHSYNC, (mode->vsync - 1) << 24 |
+		    (vtotal - 1) << 12 | (mode->hsync - 1));
+	hdmi_writel(d, HDMI_VIALSEOF, (vstart + mode->vactive) << 12 | vstart);
 	hdmi_writel(d, HDMI_VIALSEEF, 0);
-	hdmi_writel(d, HDMI_VIADLSE, HDMI_720P_VIADLSE);
-	hdmi_writel(d, HDMI_DIPCCR, HDMI_720P_DIPCCR);
+	hdmi_writel(d, HDMI_VIADLSE, (hstart + mode->hactive) << 16 | hstart);
+	hdmi_writel(d, HDMI_DIPCCR, mode->dipccr);
 
 	/* Input from the DE */
 	hdmi_clrsetbits(d, HDMI_ICR, BIT(24), 0);
@@ -282,16 +297,20 @@ static void hdmi_send_avi(struct s900_display *d, u8 vic)
 int s900_hdmi_enable(struct s900_display *d, const struct s900_mode *mode,
 		     bool *calibrated)
 {
+	int sel = hdmi_pll_sel(mode->pixclk_khz);
+
 	*calibrated = false;
 	if (d->err)
 		return d->err;
+	if (sel < 0)
+		return sel;
 
 	mdelay(10);
-	hdmi_pll_enable();
+	hdmi_pll_enable(sel);
 	mdelay(10);
 
 	hdmi_clrsetbits(d, HDMI_CR, HDMI_CR_VIDEO_EN, 0);
-	*calibrated = hdmi_phy_enable(d);
+	*calibrated = hdmi_phy_enable(d, mode);
 	if (!*calibrated && !d->err)
 		log_warning("s900: HDMI TMDS calibration timed out\n");
 

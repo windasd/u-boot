@@ -138,11 +138,11 @@ void s900_de_init(struct s900_display *d)
 /* Path 0 at the output size, layer 0 scaling the framebuffer to it */
 void s900_de_setup(struct s900_display *d, const struct s900_mode *mode)
 {
-	u32 osize = (mode->height - 1) << 16 | (mode->width - 1);
-	u32 w_factor = DIV_ROUND_UP(S900_FB_WIDTH * 8192, mode->width);
-	u32 h_factor = DIV_ROUND_UP(S900_FB_HEIGHT * 8192, mode->height);
+	u32 osize = (mode->vactive - 1) << 16 | (mode->hactive - 1);
+	u32 w_factor = DIV_ROUND_UP(S900_FB_WIDTH * 8192, mode->hactive);
+	u32 h_factor = DIV_ROUND_UP(S900_FB_HEIGHT * 8192, mode->vactive);
 	u32 ratio = S900_FB_WIDTH * S900_FB_HEIGHT * 10 /
-		    (mode->width * mode->height);
+		    (mode->hactive * mode->vactive);
 	const u32 *coef;
 	int i;
 
