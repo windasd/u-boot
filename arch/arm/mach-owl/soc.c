@@ -7,6 +7,7 @@
 
 #include <config.h>
 #include <cpu_func.h>
+#include <fdt_support.h>
 #include <init.h>
 #include <asm/cache.h>
 #include <asm/global_data.h>
@@ -14,6 +15,7 @@
 #include <linux/psci.h>
 #include <asm/io.h>
 #include <asm/arch-owl/sps.h>
+#include <asm/arch-owl/video.h>
 #include <asm/mach-types.h>
 #include <asm/psci.h>
 #include <linux/bitops.h>
@@ -131,6 +133,17 @@ int board_init(void)
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_OF_BOARD_SETUP)
+/* Never fail: a non-zero return makes booti refuse to start the OS */
+int ft_board_setup(void *blob, struct bd_info *bd)
+{
+	if (IS_ENABLED(CONFIG_VIDEO_OWL_S900))
+		s900_video_ft_fixup(blob);
+
+	return 0;
+}
+#endif
 
 void reset_cpu(void)
 {
