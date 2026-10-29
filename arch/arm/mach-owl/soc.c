@@ -13,6 +13,7 @@
 #include <linux/arm-smccc.h>
 #include <linux/psci.h>
 #include <asm/io.h>
+#include <asm/arch-owl/sps.h>
 #include <asm/mach-types.h>
 #include <asm/psci.h>
 #include <linux/bitops.h>
@@ -58,8 +59,6 @@ int dram_init_banksize(void)
 	return 0;
 }
 
-#define S900_SPS_PG_CTL		0xe012e000
-#define S900_SPS_PG_ACK		0xe012e004
 #define S900_CMU_DEVCLKEN0	0xe01600a0
 #define S900_CMU_DEVRST0	0xe01600a8
 #define S900_MFP_CTL3		0xe01b004c
@@ -78,6 +77,14 @@ int dram_init_banksize(void)
 #define NAND_ALG_EN_V18_R	BIT(25)
 #define NAND_ALG_EN_V18_W	BIT(24)
 
+int s900_sps_power_on(u32 pg, u32 ack, uint timeout_ms)
+{
+	setbits_le32(S900_SPS_PG_CTL, pg);
+
+	return wait_for_bit_le32((void *)S900_SPS_PG_ACK, ack, true,
+				 timeout_ms, false);
+}
+
 /*
  * The eMMC (SD2) runs on the NAND pads. Mux them, power the NAND domain and
  * set the pad mode as the vendor U-Boot 2015.07 does (owl_mmc_config_mfp()).
@@ -92,9 +99,7 @@ static void s900_emmc_pads_init(void)
 
 	clrbits_le32(S900_CMU_DEVRST0, DEVRST0_NANDC0);
 	setbits_le32(S900_CMU_DEVCLKEN0, DEVCLKEN0_NANDC0 | DEVCLKEN0_NANDC1);
-	setbits_le32(S900_SPS_PG_CTL, SPS_PG_NAND);
-	if (wait_for_bit_le32((void *)S900_SPS_PG_ACK, SPS_PG_ACK_NAND, true,
-			      10, false))
+	if (s900_sps_power_on(SPS_PG_NAND, SPS_PG_ACK_NAND, 10))
 		printf("S900: NAND power domain not acknowledged\n");
 	setbits_le32(S900_CMU_DEVRST0, DEVRST0_NANDC0);
 
