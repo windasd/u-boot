@@ -28,6 +28,8 @@
 #define CMU_DEVCLKEN0_DMAC	BIT(1)
 #define CMU_DEVCLKEN0_DE	BIT(8)
 #define CMU_DEVCLKEN0_HDMIA	BIT(22)
+/* ASSIST_PLL, enabled by owl_clk_init(), runs at a fixed 500 MHz */
+#define S900_ASSISTPLL_RATE	500000000
 #else
 #define CMU_DEVCLKEN0_SD(x)	BIT(22 + (x))	/* SD0..SD2: bits 22..24 */
 #define CMU_DEVCLKEN0_DMAC	BIT(17)
@@ -92,6 +94,20 @@ void owl_clk_init(struct owl_clk_priv *priv)
 	udelay(PLL_STABILITY_WAIT_US);
 }
 
+#if defined(CONFIG_MACH_S900)
+/* I2C0..I2C5 gates as in Linux owl-s900.c: I2C4 in DEVCLKEN0, the rest in DEVCLKEN1 */
+static void s900_i2c_clk_gate(struct owl_clk_priv *priv, int i2c, bool on)
+{
+	static const u8 bits[] = { 14, 15, 30, 31, 17, 1 };
+	u32 reg = i2c == 4 ? CMU_DEVCLKEN0 : CMU_DEVCLKEN1;
+
+	if (on)
+		setbits_le32(priv->base + reg, BIT(bits[i2c]));
+	else
+		clrbits_le32(priv->base + reg, BIT(bits[i2c]));
+}
+#endif
+
 int owl_clk_enable(struct clk *clk)
 {
 	struct owl_clk_priv *priv = dev_get_priv(clk->dev);
@@ -134,6 +150,14 @@ int owl_clk_enable(struct clk *clk)
 		break;
 	case CLK_HDMI_AUDIO:
 		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_HDMIA);
+		break;
+	case CLK_I2C0:
+	case CLK_I2C1:
+	case CLK_I2C2:
+	case CLK_I2C3:
+	case CLK_I2C4:
+	case CLK_I2C5:
+		s900_i2c_clk_gate(priv, clk->id - CLK_I2C0, true);
 		break;
 #endif
 	default:
@@ -178,6 +202,14 @@ int owl_clk_disable(struct clk *clk)
 	case CLK_DE0:
 	case CLK_HDMI_AUDIO:
 		/* The HDMI scanout continues into the OS (simple-framebuffer) */
+		break;
+	case CLK_I2C0:
+	case CLK_I2C1:
+	case CLK_I2C2:
+	case CLK_I2C3:
+	case CLK_I2C4:
+	case CLK_I2C5:
+		s900_i2c_clk_gate(priv, clk->id - CLK_I2C0, false);
 		break;
 #endif
 	default:
@@ -266,6 +298,16 @@ static ulong owl_clk_get_rate(struct clk *clk)
 	case CLK_SD2:
 		rate = owl_get_sd_clk_rate(priv, clk->id - CLK_SD0);
 		break;
+#if defined(CONFIG_MACH_S900)
+	case CLK_I2C0:
+	case CLK_I2C1:
+	case CLK_I2C2:
+	case CLK_I2C3:
+	case CLK_I2C4:
+	case CLK_I2C5:
+		rate = S900_ASSISTPLL_RATE / 5;
+		break;
+#endif
 	default:
 		return -ENOENT;
 	}
@@ -308,6 +350,12 @@ static const struct owl_reset_map owl_resets[] = {
 	[RESET_SD1]	= { CMU_DEVRST0, BIT(5) },
 	[RESET_SD2]	= { CMU_DEVRST0, BIT(9) },
 	[RESET_HDMI]	= { CMU_DEVRST1, BIT(2) },
+	[RESET_I2C0]	= { CMU_DEVRST1, BIT(12) },
+	[RESET_I2C1]	= { CMU_DEVRST1, BIT(13) },
+	[RESET_I2C2]	= { CMU_DEVRST1, BIT(18) },
+	[RESET_I2C3]	= { CMU_DEVRST1, BIT(19) },
+	[RESET_I2C4]	= { CMU_DEVRST1, BIT(22) },
+	[RESET_I2C5]	= { CMU_DEVRST1, BIT(23) },
 };
 
 static int owl_reset_request(struct reset_ctl *reset_ctl)
