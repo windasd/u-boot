@@ -26,6 +26,8 @@
 #if defined(CONFIG_MACH_S900)
 #define CMU_DEVCLKEN0_SD(x)	BIT(5 + (x))	/* SD0..SD2: bits 5..7 */
 #define CMU_DEVCLKEN0_DMAC	BIT(1)
+#define CMU_DEVCLKEN0_DE	BIT(8)
+#define CMU_DEVCLKEN0_HDMIA	BIT(22)
 #else
 #define CMU_DEVCLKEN0_SD(x)	BIT(22 + (x))	/* SD0..SD2: bits 22..24 */
 #define CMU_DEVCLKEN0_DMAC	BIT(17)
@@ -126,6 +128,14 @@ int owl_clk_enable(struct clk *clk)
 	case CLK_DMAC:
 		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_DMAC);
 		break;
+#if defined(CONFIG_MACH_S900)
+	case CLK_DE0:
+		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_DE);
+		break;
+	case CLK_HDMI_AUDIO:
+		setbits_le32(priv->base + CMU_DEVCLKEN0, CMU_DEVCLKEN0_HDMIA);
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -164,6 +174,12 @@ int owl_clk_disable(struct clk *clk)
 	case CLK_DMAC:
 		/* Linux and the vendor kernel expect the DMAC clock running */
 		break;
+#if defined(CONFIG_MACH_S900)
+	case CLK_DE0:
+	case CLK_HDMI_AUDIO:
+		/* The HDMI scanout continues into the OS (simple-framebuffer) */
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -287,9 +303,11 @@ struct owl_reset_map {
 
 static const struct owl_reset_map owl_resets[] = {
 	[RESET_DMAC]	= { CMU_DEVRST0, BIT(0) },
+	[RESET_DE]	= { CMU_DEVRST0, BIT(7) },
 	[RESET_SD0]	= { CMU_DEVRST0, BIT(4) },
 	[RESET_SD1]	= { CMU_DEVRST0, BIT(5) },
 	[RESET_SD2]	= { CMU_DEVRST0, BIT(9) },
+	[RESET_HDMI]	= { CMU_DEVRST1, BIT(2) },
 };
 
 static int owl_reset_request(struct reset_ctl *reset_ctl)
