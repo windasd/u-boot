@@ -530,6 +530,14 @@ config SYS_I2C_OMAP24XX_REPEATED_START
 	  send a Stop condition and issue Repeated Start (Sr) for subsequent
 	  i2c msgs.
 
+config SYS_I2C_OWL
+	bool "Actions Semi Owl I2C driver"
+	depends on DM_I2C && ARCH_OWL
+	help
+	  Support for the I2C controller of the Actions Semi S900, polled
+	  in its FIFO mode. A transfer is one message, or a write of up to
+	  six bytes followed by a message to the same target.
+
 config SYS_I2C_RCAR_I2C
 	bool "Renesas R-Car I2C driver"
 	depends on (RCAR_GEN2 || RCAR_64) && DM_I2C
