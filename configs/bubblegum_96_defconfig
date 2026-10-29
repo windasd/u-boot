@@ -13,6 +13,7 @@ CONFIG_IDENT_STRING="\nBubblegum-96"
 CONFIG_BOOTSTD_DEFAULTS=y
 CONFIG_DISTRO_DEFAULTS=y
 CONFIG_BOOTDELAY=1
+CONFIG_OF_BOARD_SETUP=y
 CONFIG_USE_BOOTARGS=y
 CONFIG_BOOTARGS="console=ttyOWL5,115200n8"
 CONFIG_BOOTCOMMAND="load mmc 1:2 ${scriptaddr} boot.scr && source ${scriptaddr}; echo bg96: boot.scr failed, trying rescue.scr on p5; load mmc 1:5 ${scriptaddr} rescue.scr && source ${scriptaddr}"
@@ -26,5 +27,14 @@ CONFIG_CMD_GPT=y
 CONFIG_CMD_MMC=y
 CONFIG_CMD_POWEROFF=y
 CONFIG_CMD_CACHE=y
+# CONFIG_CMD_CLS is not set
 CONFIG_CMD_TIMER=y
 CONFIG_MMC_OWL=y
+CONFIG_VIDEO=y
+# CONFIG_BACKLIGHT is not set
+CONFIG_VIDEO_DAMAGE=y
+# CONFIG_VIDEO_BPP8 is not set
+# CONFIG_VIDEO_BPP16 is not set
+CONFIG_SYS_WHITE_ON_BLACK=y
+# CONFIG_PANEL is not set
+CONFIG_VIDEO_OWL_S900=y
