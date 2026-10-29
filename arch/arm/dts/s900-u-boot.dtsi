@@ -5,6 +5,18 @@
 /{
 	soc {
 		bootph-all;
+
+		/* Display engine and HDMI transmitter, U-Boot only (s900_video) */
+		display@e02e0000 {
+			compatible = "actions,s900-display";
+			reg = <0x0 0xe02e0000 0x0 0x1014>,
+			      <0x0 0xe0250000 0x0 0x1f0>;
+			reg-names = "de", "hdmi";
+			clocks = <&cmu CLK_DE0>, <&cmu CLK_HDMI_AUDIO>;
+			clock-names = "de", "hdmia";
+			resets = <&cmu RESET_DE>, <&cmu RESET_HDMI>;
+			reset-names = "de", "hdmi";
+		};
 	};
 };
 

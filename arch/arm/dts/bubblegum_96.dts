@@ -30,6 +30,14 @@
 		device_type = "memory";
 		reg = <0x0 0x0 0x0 0x80000000>;
 	};
+
+	/* The HDMI framebuffer (s900_video): keep U-Boot's loads out of it */
+	reserved-memory {
+		framebuffer@19000000 {
+			reg = <0x0 0x19000000 0x0 0x800000>;
+			no-map;
+		};
+	};
 };
 
 &uart5 {
