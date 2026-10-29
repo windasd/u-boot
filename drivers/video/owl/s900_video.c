@@ -57,14 +57,18 @@ static bool s900_tried;
 static int s900_result;
 static char s900_status[128] = "not-probed";
 
-/* A mode named in the environment, else the first one the EDID lists */
-static const struct s900_mode *s900_pick_mode(struct udevice *dev,
+/*
+ * A mode named in the environment, else the first one the EDID lists.
+ * *full_range: the EDID says the sink takes Q=full in the AVI InfoFrame.
+ */
+static const struct s900_mode *s900_pick_mode(struct udevice *dev, bool *full_range,
 					      char *why, size_t len)
 {
 	const char *name = env_get("bg96_hdmi_mode");
 	u8 edid[S900_EDID_SIZE];
 	int i, blocks;
 
+	*full_range = false;
 	for (i = 0; name && i < ARRAY_SIZE(s900_modes); i++) {
 		if (!strcmp(name, s900_modes[i].name)) {
 			snprintf(why, len, "env");
@@ -77,6 +81,7 @@ static const struct s900_mode *s900_pick_mode(struct udevice *dev,
 		snprintf(why, len, "edid-error%d", blocks);
 		return S900_MODE_FALLBACK;
 	}
+	*full_range = s900_edid_rgb_selectable(edid);
 
 	for (i = 0; i < ARRAY_SIZE(s900_modes); i++) {
 		if (s900_edid_has_mode(edid, &s900_modes[i])) {
@@ -130,7 +135,7 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 	u32 en0 = readl(S900_CMU_DEVCLKEN0);
 	u32 en1 = readl(S900_CMU_DEVCLKEN1);
 	u32 rst1 = readl(S900_CMU_DEVRST1);
-	bool calibrated, go;
+	bool calibrated, full_range, go;
 	u32 cr = 0, ddc = 0;
 	char why[24];
 	int sink, ret;
@@ -160,7 +165,7 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 		log_debug("s900: no HDMI sink\n");
 		return -ENODEV;
 	}
-	mode = s900_pick_mode(dev, why, sizeof(why));
+	mode = s900_pick_mode(dev, &full_range, why, sizeof(why));
 
 	ret = s900_de_power_on(d);
 	if (ret) {
@@ -179,7 +184,7 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 
 	s900_hdmi_stop(d);
 	s900_de_setup(d, mode);
-	ret = s900_hdmi_enable(d, mode, &calibrated);
+	ret = s900_hdmi_enable(d, mode, full_range, &calibrated);
 	go = !ret && s900_de_go(d);
 	if (d->err) {
 		snprintf(s900_status, sizeof(s900_status), "error access %d", d->err);
@@ -187,8 +192,9 @@ static int s900_light(struct udevice *dev, struct s900_display *d)
 	}
 
 	snprintf(s900_status, sizeof(s900_status),
-		 "ok mode=%s/%s hpd=%d calib=%s pll=%s go=%s cr=%#x ddc=%#x",
-		 mode->name, why, sink, calibrated ? "ok" : "timeout",
+		 "ok mode=%s/%s q=%s hpd=%d calib=%s pll=%s go=%s cr=%#x ddc=%#x",
+		 mode->name, why, full_range ? "full" : "default", sink,
+		 calibrated ? "ok" : "timeout",
 		 s900_hdmi_pll_locked() ? "lock" : "nolock", go ? "ok" : "stuck",
 		 s900_hdmi_cr(d), ddc);
 

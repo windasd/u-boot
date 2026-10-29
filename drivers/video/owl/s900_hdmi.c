@@ -61,6 +61,7 @@
 #define AVI_VERSION		0x02
 #define AVI_LENGTH		0x0d
 #define AVI_PB2			0x68
+#define AVI_PB3_Q_FULL		(2 << 2)	/* RGB quantization range: full */
 #define AVI_SLOT		0
 
 /*
@@ -264,17 +265,21 @@ static void hdmi_video_config(struct s900_display *d,
 	hdmi_clrsetbits(d, HDMI_GCPCR, BIT(30) | GENMASK(7, 4), BIT(31) | BIT(1));
 }
 
-/* Write the AVI InfoFrame to its packet RAM slot and send it every frame */
-static void hdmi_send_avi(struct s900_display *d, u8 vic)
+/*
+ * Write the AVI InfoFrame to its packet RAM slot and send it every frame.
+ * The output is always full-range RGB; Q says so to a sink that takes it.
+ */
+static void hdmi_send_avi(struct s900_display *d, u8 vic, bool full_range)
 {
-	u8 sum = AVI_TYPE + AVI_VERSION + AVI_LENGTH + AVI_PB2 + vic;
+	u8 pb3 = full_range ? AVI_PB3_Q_FULL : 0;
+	u8 sum = AVI_TYPE + AVI_VERSION + AVI_LENGTH + AVI_PB2 + pb3 + vic;
 	ulong start;
 	int i;
 
 	hdmi_writel(d, HDMI_RPCR, 0);	/* stop all packets while rewriting */
 	hdmi_writel(d, HDMI_OPCR, BIT(8) | (126 + AVI_SLOT * 14));
 	hdmi_writel(d, HDMI_ORP6PH, AVI_LENGTH << 16 | AVI_VERSION << 8 | AVI_TYPE);
-	hdmi_writel(d, HDMI_ORSP6W(0), AVI_PB2 << 16 | (u8)(0x100 - sum));
+	hdmi_writel(d, HDMI_ORSP6W(0), pb3 << 24 | AVI_PB2 << 16 | (u8)(0x100 - sum));
 	hdmi_writel(d, HDMI_ORSP6W(1), vic);
 	for (i = 2; i < 8; i++)
 		hdmi_writel(d, HDMI_ORSP6W(i), 0);
@@ -295,7 +300,7 @@ static void hdmi_send_avi(struct s900_display *d, u8 vic)
  * 1.8 V supply (PMIC LDO4) is off.
  */
 int s900_hdmi_enable(struct s900_display *d, const struct s900_mode *mode,
-		     bool *calibrated)
+		     bool full_range, bool *calibrated)
 {
 	int sel = hdmi_pll_sel(mode->pixclk_khz);
 
@@ -315,7 +320,7 @@ int s900_hdmi_enable(struct s900_display *d, const struct s900_mode *mode,
 		log_warning("s900: HDMI TMDS calibration timed out\n");
 
 	hdmi_video_config(d, mode);
-	hdmi_send_avi(d, mode->vic);
+	hdmi_send_avi(d, mode->vic, full_range);
 
 	hdmi_clrsetbits(d, HDMI_CR, 0, HDMI_CR_VIDEO_EN);
 	hdmi_clrsetbits(d, HDMI_TX_2, 0, HDMI_TX_2_LANES);

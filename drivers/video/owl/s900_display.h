@@ -65,6 +65,7 @@ struct s900_mode {
 
 int s900_edid_read(struct udevice *dev, u8 *edid);
 bool s900_edid_has_mode(const u8 *edid, const struct s900_mode *mode);
+bool s900_edid_rgb_selectable(const u8 *edid);
 
 struct s900_display {
 	void __iomem *de;
@@ -89,7 +90,7 @@ void s900_hdmi_undetect(struct s900_display *d);
 u32 s900_hdmi_cr(struct s900_display *d);
 void s900_hdmi_stop(struct s900_display *d);
 int s900_hdmi_enable(struct s900_display *d, const struct s900_mode *mode,
-		     bool *calibrated);
+		     bool full_range, bool *calibrated);
 bool s900_hdmi_pll_locked(void);
 
 #endif

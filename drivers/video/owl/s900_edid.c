@@ -23,6 +23,9 @@
 #define EDID_DTD_SIZE		18
 #define CEA_TAG			0x02
 #define CEA_DB_VIDEO		2	/* data block of short video descriptors */
+#define CEA_DB_EXTENDED	7
+#define CEA_EXT_VCDB		0	/* extended tag: video capability data block */
+#define VCDB_QS			BIT(6)	/* RGB quantization range selectable */
 #define EDID_TRIES		3	/* per byte: the DDC here is marginal */
 
 static const u8 edid_header[8] = { 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0 };
@@ -152,4 +155,23 @@ bool s900_edid_has_mode(const u8 *edid, const struct s900_mode *mode)
 			return true;
 
 	return edid_cea_has(edid + EDID_BLOCK, mode);
+}
+
+/* The sink takes the RGB quantization range from the AVI InfoFrame (VCDB QS) */
+bool s900_edid_rgb_selectable(const u8 *edid)
+{
+	const u8 *b = edid + EDID_BLOCK;
+	int dtd = b[2], i, len = 0;
+
+	if (b[0] != CEA_TAG || b[1] < 3 || dtd < 4 || dtd >= EDID_BLOCK)
+		return false;
+
+	for (i = 4; i < dtd; i += len + 1) {
+		len = b[i] & 0x1f;
+		if (b[i] >> 5 == CEA_DB_EXTENDED && len >= 2 && i + len < dtd &&
+		    b[i + 1] == CEA_EXT_VCDB)
+			return b[i + 2] & VCDB_QS;
+	}
+
+	return false;
 }
