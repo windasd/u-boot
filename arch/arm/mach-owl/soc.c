@@ -64,7 +64,9 @@ int dram_init_banksize(void)
 #define S900_CMU_DEVCLKEN0	0xe01600a0
 #define S900_CMU_DEVRST0	0xe01600a8
 #define S900_MFP_CTL3		0xe01b004c
+#define S900_PAD_PULLCTL0	0xe01b0060
 #define S900_PAD_PULLCTL2	0xe01b0068
+#define S900_PAD_DRV2		0xe01b0088
 #define S900_NAND_ALG0_CTR_IO	0xe03000a8
 
 #define SPS_PG_NAND		BIT(14)
@@ -73,6 +75,10 @@ int dram_init_banksize(void)
 #define DEVCLKEN0_NANDC0	BIT(4)
 #define DEVRST0_NANDC0		BIT(3)	/* active low */
 #define MFP_CTL3_SD2		BIT(27)
+#define MFP_CTL3_I2C0		GENMASK(18, 16)	/* 0: I2C0 */
+#define PAD_PULLCTL0_I2C0	GENMASK(11, 8)
+#define PAD_PULLCTL0_I2C0_UP	(BIT(10) | BIT(8))	/* SDATA, SCLK: 1 is pull-up */
+#define PAD_DRV2_I2C0		GENMASK(31, 30)	/* 3: 12 mA */
 #define PAD_PULLCTL2_SD2	(BIT(15) | BIT(14))
 #define NAND_ALG_PAD_MASK	(BIT(21) | BIT(20))
 #define NAND_ALG_PAD_SD		BIT(21)
@@ -114,6 +120,18 @@ static void s900_emmc_pads_init(void)
 	writel(val, S900_NAND_ALG0_CTR_IO);
 }
 
+/*
+ * I2C0 is the HDMI DDC, behind level shifters with 1 kOhm pull-ups that
+ * the reset pad drive cannot pull low. Mux it with pull-ups and 12 mA, as
+ * the Linux DT asks for (the vendor U-Boot sets the same drive).
+ */
+static void s900_ddc_pads_init(void)
+{
+	clrbits_le32(S900_MFP_CTL3, MFP_CTL3_I2C0);
+	clrsetbits_le32(S900_PAD_PULLCTL0, PAD_PULLCTL0_I2C0, PAD_PULLCTL0_I2C0_UP);
+	setbits_le32(S900_PAD_DRV2, PAD_DRV2_I2C0);
+}
+
 static void show_psci_version(void)
 {
 	struct arm_smccc_res res;
@@ -128,8 +146,10 @@ static void show_psci_version(void)
 int board_init(void)
 {
 	show_psci_version();
-	if (IS_ENABLED(CONFIG_MACH_S900))
+	if (IS_ENABLED(CONFIG_MACH_S900)) {
 		s900_emmc_pads_init();
+		s900_ddc_pads_init();
+	}
 
 	return 0;
 }

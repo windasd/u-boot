@@ -16,6 +16,7 @@
 			clock-names = "de", "hdmia";
 			resets = <&cmu RESET_DE>, <&cmu RESET_HDMI>;
 			reset-names = "de", "hdmi";
+			ddc-i2c-bus = <&i2c0>;
 		};
 	};
 };
@@ -31,4 +32,9 @@
 /* owl_mmc releases the DMAC reset like the vendor U-Boot owl_dma_init() */
 &dma {
 	resets = <&cmu RESET_DMAC>;
+};
+
+/* owl_i2c pulses it like the vendor U-Boot owl_i2c_init(): it may come up held */
+&i2c0 {
+	resets = <&cmu RESET_I2C0>;
 };

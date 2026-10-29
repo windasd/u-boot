@@ -44,6 +44,12 @@
 	status = "okay";
 };
 
+/* The HDMI DDC (s900_video reads the EDID one byte per transfer) */
+&i2c0 {
+	status = "okay";
+	clock-frequency = <100000>;
+};
+
 /* uSD; no pinctrl driver, relies on the pinmux left by the boot ROM/SECM */
 &mmc0 {
 	status = "okay";
