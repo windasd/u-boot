@@ -10,6 +10,7 @@
 
 #include <dm.h>
 #include <i2c.h>
+#include <linux/delay.h>
 #include <linux/bitops.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -27,6 +28,12 @@
 #define CEA_EXT_VCDB		0	/* extended tag: video capability data block */
 #define VCDB_QS			BIT(6)	/* RGB quantization range selectable */
 #define EDID_TRIES		3	/* per byte: the DDC here is marginal */
+/*
+ * A sink woken from standby can stop answering for a while in the middle of
+ * the EDID: keep trying, in steps, for up to this long per block.
+ */
+#define EDID_BACKOFF_MS	50
+#define EDID_WAIT_MS		1000
 
 static const u8 edid_header[8] = { 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0 };
 
@@ -63,6 +70,7 @@ int s900_edid_read(struct udevice *dev, u8 *edid)
 {
 	struct udevice *bus, *chip;
 	int i, len = EDID_BLOCK, ret;
+	uint waited = 0;
 
 	if (!IS_ENABLED(CONFIG_DM_I2C))
 		return -ENOSYS;
@@ -75,7 +83,15 @@ int s900_edid_read(struct udevice *dev, u8 *edid)
 		return ret;
 
 	for (i = 0; i < len; i++) {
+		if (i == EDID_BLOCK)
+			waited = 0;	/* per block */
 		ret = edid_read_byte(chip, i, &edid[i]);
+		if (ret && waited < EDID_WAIT_MS) {
+			mdelay(EDID_BACKOFF_MS);
+			waited += EDID_BACKOFF_MS;
+			i--;	/* the same byte again */
+			continue;
+		}
 		if (ret && i < EDID_BLOCK)
 			return ret;
 		if (ret)
